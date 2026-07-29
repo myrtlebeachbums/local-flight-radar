@@ -1,5 +1,11 @@
 #include "AircraftManager.h"
+#include <algorithm>
+#include <cmath>
 #include <vector>
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 constexpr int SCREEN_SIZE = 240;
 constexpr int SCREEN_SIZE_DIV_2 = (SCREEN_SIZE / 2);
@@ -41,8 +47,124 @@ static const uint32_t AircraftColours[] =
         lgfx::color888(255, 120, 200)  // Pink
 };
 
+void AircraftManager::FetchTaskEntry(void *parameter)
+{
+    auto *self = static_cast<AircraftManager *>(parameter);
+    self->FetchLoop();
+}
+
+void AircraftManager::FetchLoop()
+{
+    const TickType_t delayTicks = pdMS_TO_TICKS(fetchInterval == 0 ? 1000 : fetchInterval);
+
+    for (;;)
+    {
+        std::vector<Aircraft> aircraft;
+        if (dataSource.Fetch(aircraft))
+        {
+            if (pendingAircraftMutex != nullptr &&
+                xSemaphoreTake(pendingAircraftMutex, portMAX_DELAY) == pdTRUE)
+            {
+                pendingAircraft = std::move(aircraft);
+                pendingAircraftReady = true;
+                xSemaphoreGive(pendingAircraftMutex);
+            }
+        }
+
+        vTaskDelay(delayTicks);
+    }
+}
+
+bool AircraftManager::TryConsumePendingAircraft(std::vector<Aircraft> &aircraft)
+{
+    if (pendingAircraftMutex == nullptr)
+        return false;
+
+    if (xSemaphoreTake(pendingAircraftMutex, 0) != pdTRUE)
+        return false;
+
+    const bool hasUpdate = pendingAircraftReady;
+    if (hasUpdate)
+    {
+        aircraft = std::move(pendingAircraft);
+        pendingAircraft.clear();
+        pendingAircraftReady = false;
+    }
+
+    xSemaphoreGive(pendingAircraftMutex);
+    return hasUpdate;
+}
+
+void AircraftManager::LoadDetailFields()
+{
+    detailFields.clear();
+
+    for (size_t i = 0; i < AIRCRAFT_DETAIL_FIELD_COUNT; ++i)
+    {
+        const auto &spec = GetAircraftDetailFieldSpec(i);
+        const String storedValue = configServer.GetStoredString(spec.key);
+        const bool enabled = storedValue.isEmpty() ? spec.defaultEnabled : storedValue == "true";
+
+        if (!enabled)
+            continue;
+
+        if (detailFields.size() >= MAX_SELECTED_DETAIL_FIELDS)
+            continue;
+
+        detailFields.push_back(spec.field);
+    }
+
+    if (!detailFields.empty())
+        return;
+
+    for (size_t i = 0; i < AIRCRAFT_DETAIL_FIELD_COUNT && detailFields.size() < MAX_SELECTED_DETAIL_FIELDS; ++i)
+    {
+        const auto &spec = GetAircraftDetailFieldSpec(i);
+        if (spec.defaultEnabled)
+            detailFields.push_back(spec.field);
+    }
+}
+
+String AircraftManager::FormatDetailValue(const TrackedAircraft &tracked, AircraftDetailField field) const
+{
+    switch (field)
+    {
+    case AircraftDetailField::Altitude:
+        return String((int)MetersToDisplayAltitude(unitSystem, tracked.state.baroAltitude)) + " " + AltitudeUnitLabel(unitSystem);
+    case AircraftDetailField::Speed:
+        return String((int)MpsToDisplaySpeed(unitSystem, tracked.state.velocity)) + " " + SpeedUnitLabel(unitSystem);
+    case AircraftDetailField::Heading:
+        return String((int)tracked.state.trueTrack) + " deg";
+    case AircraftDetailField::Distance:
+    {
+        if (lat == 0.0 && lon == 0.0)
+            return "--";
+
+        constexpr float MILES_PER_DEG_LAT = 69.172f;
+        const float milesPerDegLon = MILES_PER_DEG_LAT * std::cos(radians(lat));
+        const float dLon = (tracked.state.longitude - lon) * milesPerDegLon;
+        const float dLat = (tracked.state.latitude - lat) * MILES_PER_DEG_LAT;
+        const float distanceMiles = std::sqrt(dLon * dLon + dLat * dLat);
+        return String(MilesToDisplayDistance(unitSystem, distanceMiles), 1) + " " + DistanceUnitLabel(unitSystem);
+    }
+    case AircraftDetailField::Squawk:
+        return tracked.state.squawk.isEmpty() ? String("--") : tracked.state.squawk;
+    case AircraftDetailField::Icao24:
+        return tracked.state.icao24.isEmpty() ? String("--") : tracked.state.icao24;
+    case AircraftDetailField::MessageAge:
+    {
+        const unsigned long ageMs = millis() - tracked.lastSeen;
+        return String(ageMs / 1000.0f, 1) + " s";
+    }
+    }
+
+    return "--";
+}
+
 void AircraftManager::Initialise()
 {
+    dataSource.Initialise();
+
     // get receiver point + display distance
     lat = configServer.GetStoredString("receiver-lat").toDouble();
     lon = configServer.GetStoredString("receiver-lon").toDouble();
@@ -59,48 +181,91 @@ void AircraftManager::Initialise()
     // configuration
     const String renderText = configServer.GetStoredString("infotext");
     const String renderTris = configServer.GetStoredString("triangle");
+    const String renderIncomplete = configServer.GetStoredString("show-incomplete-data");
     if (!renderText.isEmpty())
         displayInfoText = renderText == "true" ? true : false;
     if (!renderTris.isEmpty())
         displayTriangles = renderTris == "true" ? true : false;
+    if (!renderIncomplete.isEmpty())
+        displayIncompleteAircraft = renderIncomplete == "true" ? true : false;
 
-    dataSource.Initialise();
+    unitSystem = ParseUnitSystem(configServer.GetStoredString("units"));
+    LoadDetailFields();
+
     fetchInterval = dataSource.GetFetchIntervalMs();
+
+    if (pendingAircraftMutex == nullptr)
+        pendingAircraftMutex = xSemaphoreCreateMutex();
+
+    if (pendingAircraftMutex != nullptr && fetchTaskHandle == nullptr)
+    {
+        BaseType_t taskStarted = xTaskCreatePinnedToCore(
+            AircraftManager::FetchTaskEntry,
+            "aircraftFetch",
+            8192,
+            this,
+            1,
+            &fetchTaskHandle,
+            0);
+
+        if (taskStarted != pdPASS)
+        {
+            fetchTaskHandle = nullptr;
+            Serial.println("[WARN] Unable to start aircraft fetch task");
+        }
+    }
+    else if (pendingAircraftMutex == nullptr)
+    {
+        Serial.println("[WARN] Unable to create aircraft fetch mutex");
+    }
 }
 
 void AircraftManager::Update()
 {
-    unsigned long now = millis();
+    std::vector<Aircraft> aircraft;
 
-    // fetch cycle
-    if (now - lastFetch >= fetchInterval)
+    if (fetchTaskHandle != nullptr)
     {
+        if (!TryConsumePendingAircraft(aircraft))
+            return;
+    }
+    else
+    {
+        unsigned long now = millis();
+
+        // fetch cycle fallback if the background task could not start
+        if (now - lastFetch < fetchInterval)
+            return;
+
         lastFetch = now;
 
-        std::vector<Aircraft> aircraft;
         if (!dataSource.Fetch(aircraft))
             return;
-        now = millis(); // override with post-parse timestamp
+    }
 
-        for (auto &ac : aircraft)
-        {
-            auto it = trackedAircraft.find(ac.icao24);
-            if (it == trackedAircraft.end())
-                trackedAircraft.emplace(ac.icao24, TrackedAircraft{ac, now});
-            else
-                it->second.Update(ac, now);
-        }
+    if (aircraft.empty())
+        return;
 
-        // remove any planes that disappeared from the feed
-        for (auto it = trackedAircraft.begin(); it != trackedAircraft.end();)
-        {
-            bool aircraftPresent = std::any_of(aircraft.begin(), aircraft.end(), [&](const Aircraft &ac)
-                                               { return ac.icao24 == it->first; });
-            if (!aircraftPresent)
-                it = trackedAircraft.erase(it);
-            else
-                ++it;
-        }
+    unsigned long now = millis();
+
+    for (auto &ac : aircraft)
+    {
+        auto it = trackedAircraft.find(ac.icao24);
+        if (it == trackedAircraft.end())
+            trackedAircraft.emplace(ac.icao24, TrackedAircraft{ac, now});
+        else
+            it->second.Update(ac, now);
+    }
+
+    // remove any planes that disappeared from the feed
+    for (auto it = trackedAircraft.begin(); it != trackedAircraft.end();)
+    {
+        bool aircraftPresent = std::any_of(aircraft.begin(), aircraft.end(), [&](const Aircraft &ac)
+                                           { return ac.icao24 == it->first; });
+        if (!aircraftPresent)
+            it = trackedAircraft.erase(it);
+        else
+            ++it;
     }
 }
 
@@ -143,6 +308,8 @@ void AircraftManager::DrawDetails(LGFX_Sprite &backbuffer)
     // Callsign
     String callsign = tracked.state.callsign;
     callsign.trim();
+    if (callsign.isEmpty())
+        callsign = "UNKNOWN";
 
     backbuffer.setTextSize(2);
     backbuffer.drawString(
@@ -153,35 +320,19 @@ void AircraftManager::DrawDetails(LGFX_Sprite &backbuffer)
     backbuffer.setTextSize(1);
 
     int y = 105;
-    constexpr int LINE = 20;
+    constexpr int LINE = 18;
 
-    backbuffer.drawString(
-        "ALT " + String((int)tracked.state.baroAltitude) + " m",
-        CENTRE,
-        y);
+    for (const auto field : detailFields)
+    {
+        const auto &spec = GetAircraftDetailFieldSpec(static_cast<size_t>(field));
+        backbuffer.drawString(
+            String(spec.label) + " " + FormatDetailValue(tracked, field),
+            CENTRE,
+            y);
+        y += LINE;
+    }
 
-    y += LINE;
-
-    backbuffer.drawString(
-        "SPD " + String((int)tracked.state.velocity) + " m/s",
-        CENTRE,
-        y);
-
-    y += LINE;
-
-    backbuffer.drawString(
-        "HDG " + String((int)tracked.state.trueTrack) + " deg",
-        CENTRE,
-        y);
-
-    y += LINE;
-
-    backbuffer.drawString(
-        tracked.state.icao24,
-        CENTRE,
-        y);
-
-    y += 30;
+    y += 22;
 
     backbuffer.setTextColor(lgfx::color888(0, 100, 0));
 
@@ -215,6 +366,11 @@ void AircraftManager::Draw(LGFX_Sprite &backbuffer)
         if (tracked.state.onGround)
             continue;
 
+        String callsign = tracked.state.callsign;
+        callsign.trim();
+        if (!displayIncompleteAircraft && callsign.isEmpty())
+            continue;
+
         visibleAircraft.push_back(&tracked);
     }
 
@@ -231,6 +387,11 @@ void AircraftManager::Draw(LGFX_Sprite &backbuffer)
     for (auto &[icao, tracked] : trackedAircraft)
     {
         if (tracked.state.onGround)
+            continue;
+
+        String callsign = tracked.state.callsign;
+        callsign.trim();
+        if (!displayIncompleteAircraft && callsign.isEmpty())
             continue;
 
         visibleAircraft.push_back(&tracked);

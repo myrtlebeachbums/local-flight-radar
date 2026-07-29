@@ -3,9 +3,15 @@
 #include <map>
 #include <vector>
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
+
 #include "models/TrackedAircraft.h"
 #include "ConfigurationWebServer.h"
 #include "AircraftDataSource.h"
+#include "DetailFields.h"
+#include "UnitSystem.h"
 #include "LGFX.h"
 
 class AircraftManager
@@ -18,9 +24,16 @@ private:
 
     bool displayInfoText = true;
     bool displayTriangles = true;
+    bool displayIncompleteAircraft = true;
+    UnitSystem unitSystem = UnitSystem::Aviation;
+    std::vector<AircraftDetailField> detailFields;
 
     unsigned long fetchInterval = 0;
     unsigned long lastFetch = 999999;
+    std::vector<Aircraft> pendingAircraft;
+    bool pendingAircraftReady = false;
+    SemaphoreHandle_t pendingAircraftMutex = nullptr;
+    TaskHandle_t fetchTaskHandle = nullptr;
 
     ConfigurationWebServer &configServer;
     AircraftDataSource &dataSource;
@@ -31,6 +44,8 @@ private:
     void DrawAircraftInfo(LGFX_Sprite &backbuffer, int x, int y, const TrackedAircraft &tracked) const;
     void DrawAircraftTriangle(LGFX_Sprite &backbuffer, int x, int y, const TrackedAircraft &tracked, bool selected) const;
     void DrawAircraftTriangle(LGFX_Sprite &backbuffer, int x, int y, const TrackedAircraft &tracked) const;
+    void LoadDetailFields();
+    String FormatDetailValue(const TrackedAircraft &tracked, AircraftDetailField field) const;
 
 public:
     AircraftManager(ConfigurationWebServer &config, AircraftDataSource &source, LGFX &tftGfx)
@@ -38,6 +53,10 @@ public:
     {
     }
     ~AircraftManager() = default;
+
+    static void FetchTaskEntry(void *parameter);
+    void FetchLoop();
+    bool TryConsumePendingAircraft(std::vector<Aircraft> &aircraft);
 
     void Initialise();
     void Update();

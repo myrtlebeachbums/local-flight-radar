@@ -4,11 +4,11 @@
 
 namespace WiFiManagerHelpers
 {
-    constexpr const char* WiFiManagerName = "MicroRadar-Setup";
+    constexpr const char* WiFiManagerName = "LocalFlightRadar-Setup";
 
     static void ConfigureWiFiManager(WiFiManager& wm, LGFX& tft)
     {
-        wm.setTitle("Micro Radar - Setup WiFi");
+        wm.setTitle("Local Flight Radar - Setup WiFi");
         wm.setCustomHeadElement("<style>body{background:#111;color:#00ff00;font-family:monospace;} div:has(> a){background:#00ff00;} a:hover{color:#111;}</style>");
 
         wm.setAPCallback([&tft](WiFiManager* wifiManager) {

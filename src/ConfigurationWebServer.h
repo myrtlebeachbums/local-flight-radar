@@ -9,7 +9,7 @@ private:
     Preferences prefs;
 
 public:
-    ConfigurationWebServer() : server(80), prefs() {}
+    ConfigurationWebServer() : server(8080), prefs() {}
     ConfigurationWebServer(int port) : server(port), prefs() {}
 
     void Initialise();

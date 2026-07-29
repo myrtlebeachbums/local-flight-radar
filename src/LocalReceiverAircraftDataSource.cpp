@@ -1,6 +1,8 @@
 #include "LocalReceiverAircraftDataSource.h"
 
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
+#include "UnitSystem.h"
 
 namespace
 {
@@ -10,6 +12,7 @@ namespace
     constexpr float MAX_POSITION_AGE_SECONDS = 15.0f;
     constexpr float EARTH_RADIUS_MILES = 3958.7613f;
     constexpr float DEFAULT_RANGE_MILES = 50.0f;
+    constexpr unsigned long MIN_FETCH_INTERVAL_MS = 2000;
 }
 
 String LocalReceiverAircraftDataSource::NormalizeBaseUrl(String url)
@@ -96,19 +99,23 @@ bool LocalReceiverAircraftDataSource::ParseAircraftObject(const JsonVariantConst
 
 void LocalReceiverAircraftDataSource::Initialise()
 {
-    const String receiverIp = configServer.GetStoredString("receiver-ip");
-    if (!receiverIp.isEmpty())
+    const String receiverUrl = NormalizeBaseUrl(configServer.GetStoredString("receiver-url"));
+    if (!receiverUrl.isEmpty())
     {
-        baseUrl = NormalizeBaseUrl(String("http://") + receiverIp + ":8080/data");
+        baseUrl = receiverUrl;
     }
     else
     {
-        baseUrl = NormalizeBaseUrl(configServer.GetStoredString("receiver-url"));
+        const String receiverIp = configServer.GetStoredString("receiver-ip");
+        if (!receiverIp.isEmpty())
+        {
+            baseUrl = NormalizeBaseUrl(String("http://") + receiverIp + ":8080/data");
+        }
     }
 
     if (baseUrl.isEmpty())
     {
-        fetchInterval = 1000;
+        fetchInterval = MIN_FETCH_INTERVAL_MS;
         return;
     }
 
@@ -117,20 +124,20 @@ void LocalReceiverAircraftDataSource::Initialise()
     {
         Serial.print("[WARN] Local receiver discovery failed: ");
         Serial.println(result.errorMessage);
-        fetchInterval = 1000;
+        fetchInterval = MIN_FETCH_INTERVAL_MS;
         return;
     }
 
     JsonDocument doc;
     if (deserializeJson(doc, result.response))
     {
-        fetchInterval = 1000;
+        fetchInterval = MIN_FETCH_INTERVAL_MS;
         return;
     }
 
-    fetchInterval = doc["refresh"] | 1000;
-    if (fetchInterval < 1000)
-        fetchInterval = 1000;
+    fetchInterval = doc["refresh"] | MIN_FETCH_INTERVAL_MS;
+    if (fetchInterval < MIN_FETCH_INTERVAL_MS)
+        fetchInterval = MIN_FETCH_INTERVAL_MS;
 
     if (!doc["lat"].isNull())
     {
@@ -144,9 +151,8 @@ void LocalReceiverAircraftDataSource::Initialise()
         configServer.SetStoredString("receiver-lon", String(receiverLon, 6));
     }
 
-    rangeMiles = configServer.GetStoredString("radius").toFloat();
-    if (rangeMiles <= 0.0f)
-        rangeMiles = DEFAULT_RANGE_MILES;
+    const String radiusSetting = configServer.GetStoredString("radius");
+    rangeMiles = radiusSetting.isEmpty() ? DEFAULT_RANGE_MILES : ClampMilesRange(radiusSetting.toFloat());
 }
 
 unsigned long LocalReceiverAircraftDataSource::GetFetchIntervalMs() const
@@ -162,41 +168,95 @@ bool LocalReceiverAircraftDataSource::Fetch(std::vector<Aircraft>& aircraft)
         return false;
     }
 
-    HttpResult result = http.Get(baseUrl + "/aircraft.json");
-    if (!result.success)
-    {
-        Serial.print("[WARN] Local receiver aircraft request failed: ");
-        Serial.println(result.errorMessage);
-        return false;
-    }
+    JsonDocument filter;
+    filter["aircraft"][0]["hex"] = true;
+    filter["aircraft"][0]["flight"] = true;
+    filter["aircraft"][0]["lat"] = true;
+    filter["aircraft"][0]["lon"] = true;
+    filter["aircraft"][0]["alt_baro"] = true;
+    filter["aircraft"][0]["alt_geom"] = true;
+    filter["aircraft"][0]["gs"] = true;
+    filter["aircraft"][0]["track"] = true;
+    filter["aircraft"][0]["baro_rate"] = true;
+    filter["aircraft"][0]["seen_pos"] = true;
+    filter["aircraft"][0]["seen"] = true;
+    filter["aircraft"][0]["on_ground"] = true;
+    filter["aircraft"][0]["squawk"] = true;
+    filter["aircraft"][0]["spi"] = true;
 
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, result.response);
-    if (error)
+    constexpr uint8_t MAX_ATTEMPTS = 2;
+    for (uint8_t attempt = 0; attempt < MAX_ATTEMPTS; ++attempt)
     {
-        Serial.print("[WARN] Local receiver aircraft JSON parse failed: ");
-        Serial.println(error.f_str());
-        return false;
-    }
-
-    aircraft.clear();
-    JsonArrayConst items = doc["aircraft"].as<JsonArrayConst>();
-    for (JsonVariantConst item : items)
-    {
-        Aircraft ac;
-        if (!ParseAircraftObject(item, ac))
-            continue;
-
-        if (receiverLat != 0.0f || receiverLon != 0.0f)
+        HTTPClient client;
+        if (!client.begin(baseUrl + "/aircraft.json"))
         {
-            const float distanceMiles =
-                MilesBetween(receiverLat, receiverLon, ac.latitude, ac.longitude);
-            if (distanceMiles > rangeMiles)
-                continue;
+            Serial.println("[WARN] Local receiver aircraft request failed: unable to begin request");
+            return false;
         }
 
-        aircraft.push_back(ac);
+        client.setTimeout(5000);
+
+        const int responseCode = client.GET();
+        if (responseCode <= 0)
+        {
+            Serial.print("[WARN] Local receiver aircraft request failed: ");
+            Serial.println(client.errorToString(responseCode));
+            client.end();
+            return false;
+        }
+
+        if (responseCode != HTTP_CODE_OK)
+        {
+            Serial.print("[WARN] Local receiver aircraft request returned HTTP ");
+            Serial.println(responseCode);
+            client.end();
+            return false;
+        }
+
+        const String body = client.getString();
+        client.end();
+        if (body.isEmpty())
+        {
+            Serial.println("[WARN] Local receiver aircraft request returned an empty body");
+            return false;
+        }
+
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(
+            doc,
+            body,
+            DeserializationOption::Filter(filter));
+        if (!error)
+        {
+            aircraft.clear();
+            JsonArrayConst items = doc["aircraft"].as<JsonArrayConst>();
+            for (JsonVariantConst item : items)
+            {
+                Aircraft ac;
+                if (!ParseAircraftObject(item, ac))
+                    continue;
+
+                if (receiverLat != 0.0f || receiverLon != 0.0f)
+                {
+                    const float distanceMiles =
+                        MilesBetween(receiverLat, receiverLon, ac.latitude, ac.longitude);
+                    if (distanceMiles > rangeMiles)
+                        continue;
+                }
+
+                aircraft.push_back(ac);
+            }
+
+            return true;
+        }
+
+        Serial.print("[WARN] Local receiver aircraft JSON parse failed: ");
+        Serial.println(error.f_str());
+        if (error != DeserializationError::IncompleteInput || attempt + 1 >= MAX_ATTEMPTS)
+            return false;
+
+        delay(250);
     }
 
-    return true;
+    return false;
 }
