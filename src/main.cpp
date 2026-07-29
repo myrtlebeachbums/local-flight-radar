@@ -8,6 +8,7 @@
 #include "HttpRequestManager.h"
 #include "OpenSkyAuthTokenHandler.h"
 #include "OpenSkyAircraftDataSource.h"
+#include "LocalReceiverAircraftDataSource.h"
 #include "AircraftManager.h"
 #include "DrawHelpers.h"
 #include "models/Aircraft.h"
@@ -37,11 +38,17 @@ ConfigurationWebServer configServer;
 HttpRequestManager http;
 OpenSkyAuthTokenHandler authHandler(http);
 OpenSkyAircraftDataSource dataSource(configServer, authHandler, http);
+LocalReceiverAircraftDataSource localDataSource(configServer, http);
+
+constexpr bool USE_LOCAL_RECEIVER = false;
+AircraftDataSource* activeDataSource =
+    USE_LOCAL_RECEIVER ? static_cast<AircraftDataSource*>(&localDataSource)
+                       : static_cast<AircraftDataSource*>(&dataSource);
 
 ESP32Encoder encoder;
 int64_t lastEncoderPos = 0;
 
-AircraftManager aircraftManager(configServer, dataSource, tft);
+AircraftManager aircraftManager(configServer, *activeDataSource, tft);
 
 void SetLed(uint8_t r, uint8_t g, uint8_t b)
 {
