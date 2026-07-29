@@ -7,6 +7,7 @@
 #include "ConfigurationWebServer.h"
 #include "HttpRequestManager.h"
 #include "OpenSkyAuthTokenHandler.h"
+#include "OpenSkyAircraftDataSource.h"
 #include "AircraftManager.h"
 #include "DrawHelpers.h"
 #include "models/Aircraft.h"
@@ -35,11 +36,12 @@ WiFiManager wm;
 ConfigurationWebServer configServer;
 HttpRequestManager http;
 OpenSkyAuthTokenHandler authHandler(http);
+OpenSkyAircraftDataSource dataSource(configServer, authHandler, http);
 
 ESP32Encoder encoder;
 int64_t lastEncoderPos = 0;
 
-AircraftManager aircraftManager(configServer, authHandler, http, tft);
+AircraftManager aircraftManager(configServer, dataSource, tft);
 
 void SetLed(uint8_t r, uint8_t g, uint8_t b)
 {

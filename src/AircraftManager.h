@@ -1,10 +1,11 @@
 #pragma once
 
 #include <map>
+#include <vector>
 
 #include "models/TrackedAircraft.h"
 #include "ConfigurationWebServer.h"
-#include "OpenSkyAuthTokenHandler.h"
+#include "AircraftDataSource.h"
 #include "LGFX.h"
 
 class AircraftManager
@@ -22,8 +23,7 @@ private:
     unsigned long lastFetch = 999999;
 
     ConfigurationWebServer &configServer;
-    OpenSkyAuthTokenHandler &authHandler;
-    HttpRequestManager &http;
+    AircraftDataSource &dataSource;
     LGFX &tft;
 
     void DrawRadarCircles(LGFX_Sprite &backbuffer) const;
@@ -33,8 +33,8 @@ private:
     void DrawAircraftTriangle(LGFX_Sprite &backbuffer, int x, int y, const TrackedAircraft &tracked) const;
 
 public:
-    AircraftManager(ConfigurationWebServer &config, OpenSkyAuthTokenHandler &auth, HttpRequestManager &httpManager, LGFX &tftGfx)
-        : configServer(config), authHandler(auth), http(httpManager), tft(tftGfx)
+    AircraftManager(ConfigurationWebServer &config, AircraftDataSource &source, LGFX &tftGfx)
+        : configServer(config), dataSource(source), tft(tftGfx)
     {
     }
     ~AircraftManager() = default;
