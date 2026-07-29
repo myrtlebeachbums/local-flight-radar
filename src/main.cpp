@@ -18,7 +18,7 @@
 #define ENCODER_B 8
 #define ENCODER_SW 7
 
-#define RGB_LED_PIN 21
+#define RGB_LED_PIN 48
 
 Adafruit_NeoPixel statusLed(
     1,
