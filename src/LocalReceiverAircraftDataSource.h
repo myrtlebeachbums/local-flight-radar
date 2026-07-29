@@ -14,9 +14,13 @@ private:
 
     String baseUrl;
     unsigned long fetchInterval = 1000;
+    float receiverLat = 0.0f;
+    float receiverLon = 0.0f;
+    float rangeMiles = 50.0f;
 
     static String NormalizeBaseUrl(String url);
     static bool ParseAircraftObject(const JsonVariantConst& item, Aircraft& aircraft);
+    static float MilesBetween(float lat1, float lon1, float lat2, float lon2);
 
 public:
     LocalReceiverAircraftDataSource(

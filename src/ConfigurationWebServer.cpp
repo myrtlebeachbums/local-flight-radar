@@ -16,57 +16,25 @@ static const char CONFIG_HTML[] PROGMEM = R"(
 
             <form id="cfg" action="/save" method="POST" class="flex flex-col gap-4 sm:gap-2">
 
-                <div class="flex flex-col sm:flex-row gap-4 sm:gap-5">
-                    <label class="flex flex-col sm:flex-row gap-2 flex-1">
-                        <span>Latitude:</span>
-                        <input
-                            name="latitude"
-                            type="number"
-                            min="-90"
-                            step="0.000001"
-                            max="90"
-                            value='%LATITUDE%'
-                            class="border border-green-500 bg-gray-900 w-full px-3 py-2 text-lg sm:text-base sm:px-1 sm:py-0">
-                    </label>
-
-                    <label class="flex flex-col sm:flex-row gap-2 flex-1">
-                        <span>Longitude:</span>
-                        <input
-                            name="longitude"
-                            type="number"
-                            min="-180"
-                            step="0.000001"
-                            max="180"
-                            value='%LONGITUDE%'
-                            class="border border-green-500 bg-gray-900 w-full px-3 py-2 text-lg sm:text-base sm:px-1 sm:py-0">
-                    </label>
-                </div>
+                <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                    <span>Flight tracker IP address:</span>
+                    <input
+                        name="receiver-ip"
+                        type="text"
+                        value='%RECEIVER_IP%'
+                        placeholder="172.16.0.100"
+                        class="flex-1 border border-green-500 bg-gray-900 w-full px-3 py-2 text-lg sm:text-base sm:px-1 sm:py-0">
+                </label>
 
                 <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-                    <span>Radius (in &deg;):</span>
+                    <span>Distance (miles):</span>
                     <input
                         name="radius"
                         type="number"
-                        min="0.000001"
-                        step="0.000001"
-                        max="2.499999"
+                        min="1"
+                        step="1"
+                        max="200"
                         value='%RADIUS%'
-                        class="flex-1 border border-green-500 bg-gray-900 w-full px-3 py-2 text-lg sm:text-base sm:px-1 sm:py-0">
-                </label>
-
-                <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-                    <span>OpenSkyAPI Client ID:</span>
-                    <input
-                        name="opensky-id"
-                        value='%OPENSKY_ID%'
-                        class="flex-1 border border-green-500 bg-gray-900 w-full px-3 py-2 text-lg sm:text-base sm:px-1 sm:py-0">
-                </label>
-
-                <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-                    <span>OpenSkyAPI Client Secret:</span>
-                    <input
-                        name="opensky-secret"
-                        value='%OPENSKY_SECRET%'
                         class="flex-1 border border-green-500 bg-gray-900 w-full px-3 py-2 text-lg sm:text-base sm:px-1 sm:py-0">
                 </label>
 
@@ -135,30 +103,21 @@ void ConfigurationWebServer::Initialise()
 
         // read all values up front so the processor lambda can capture by value
         prefs.begin("config", true);
-        const String latitude = prefs.getString("latitude", "");
-        const String longitude = prefs.getString("longitude", "");
+        const String receiverIp = prefs.getString("receiver-ip", "");
         const String radius = prefs.getString("radius", "1.0");
-        const String openskyClientId = prefs.getString("opensky-id", "");
-        String openskySecret = prefs.getString("opensky-secret", "");
         const String scanlineEnabled = prefs.getString("scanline", "true");
         const String infoTextEnabled = prefs.getString("infotext", "true");
         const String triangleEnabled = prefs.getString("triangle", "true");
         prefs.end();
 
-        // mask secret before sending to client
-        std::fill(openskySecret.begin(), openskySecret.end(), '*');
-
         // template processor called once per %PLACEHOLDER% token found in CONFIG_HTML.
         AsyncWebServerResponse* response = request->beginResponse(
             200, "text/html",
             (const uint8_t*)CONFIG_HTML, sizeof(CONFIG_HTML) - 1,
-            [latitude, longitude, radius, openskyClientId, openskySecret, scanlineEnabled, infoTextEnabled, triangleEnabled]
+            [receiverIp, radius, scanlineEnabled, infoTextEnabled, triangleEnabled]
             (const String& var) -> String {
-                if (var == "LATITUDE")       return latitude;
-                if (var == "LONGITUDE")      return longitude;
+                if (var == "RECEIVER_IP")    return receiverIp;
                 if (var == "RADIUS")         return radius;
-                if (var == "OPENSKY_ID")     return openskyClientId;
-                if (var == "OPENSKY_SECRET") return openskySecret;
                 if (var == "SCANLINE")       return scanlineEnabled == "true" ? "checked" : "";
                 if (var == "INFOTEXT")       return infoTextEnabled == "true" ? "checked" : "";
                 if (var == "TRIANGLE")       return triangleEnabled == "true" ? "checked" : "";
@@ -184,18 +143,8 @@ void ConfigurationWebServer::Initialise()
 
         prefs.begin("config", false);
 
-        TrySaveParam("latitude");
-        TrySaveParam("longitude");
+        TrySaveParam("receiver-ip");
         TrySaveParam("radius");
-        TrySaveParam("opensky-id");
-
-        const auto* param = request->getParam("opensky-secret", true);
-        if (param != nullptr) {
-            const String& secret = param->value();
-            if (secret.indexOf('*') == -1) { // Special handling for secret: don't overwrite with masked value
-                prefs.putString("opensky-secret", secret);
-            }
-        }
 
         prefs.putString("scanline", request->hasParam("scanline", true) ? "true" : "false");
         prefs.putString("triangle", request->hasParam("triangle", true) ? "true" : "false");
@@ -218,4 +167,15 @@ const String ConfigurationWebServer::GetStoredString(const char *key)
     const String value = prefs.getString(key, "");
     prefs.end();
     return value;
+}
+
+void ConfigurationWebServer::SetStoredString(const char* key, const String& value)
+{
+    if (!prefs.begin("config", false))
+    {
+        return;
+    }
+
+    prefs.putString(key, value);
+    prefs.end();
 }

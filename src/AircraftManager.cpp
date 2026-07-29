@@ -43,10 +43,18 @@ static const uint32_t AircraftColours[] =
 
 void AircraftManager::Initialise()
 {
-    // get centre point + radius
-    lat = configServer.GetStoredString("latitude").toDouble();
-    lon = configServer.GetStoredString("longitude").toDouble();
+    // get receiver point + display distance
+    lat = configServer.GetStoredString("receiver-lat").toDouble();
+    lon = configServer.GetStoredString("receiver-lon").toDouble();
+    if (lat == 0.0 && lon == 0.0)
+    {
+        lat = configServer.GetStoredString("latitude").toDouble();
+        lon = configServer.GetStoredString("longitude").toDouble();
+    }
+
     rad = configServer.GetStoredString("radius").toDouble();
+    if (rad <= 0.0)
+        rad = 50.0;
 
     // configuration
     const String renderText = configServer.GetStoredString("infotext");
@@ -332,8 +340,11 @@ void AircraftManager::DrawRadarCircles(LGFX_Sprite &backbuffer) const
 
 std::pair<int, int> AircraftManager::ProjectCoordinateToScreen(float predLat, float predLon) const
 {
-    const float dLon = predLon - lon;
-    const float dLat = predLat - lat;
+    constexpr float MILES_PER_DEG_LAT = 69.172f;
+    const float milesPerDegLon = MILES_PER_DEG_LAT * std::cos(radians(lat));
+
+    const float dLon = (predLon - lon) * milesPerDegLon;
+    const float dLat = (predLat - lat) * MILES_PER_DEG_LAT;
 
     const float normLon = (dLon + rad) / (2.0f * rad);
     const float normLat = (dLat + rad) / (2.0f * rad);

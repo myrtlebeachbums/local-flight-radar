@@ -15,6 +15,7 @@
 #include "models/TrackedAircraft.h"
 #include <ESP32Encoder.h>
 #include <Adafruit_NeoPixel.h>
+#include <memory>
 
 #define ENCODER_A 9
 #define ENCODER_B 8
@@ -40,15 +41,10 @@ OpenSkyAuthTokenHandler authHandler(http);
 OpenSkyAircraftDataSource dataSource(configServer, authHandler, http);
 LocalReceiverAircraftDataSource localDataSource(configServer, http);
 
-constexpr bool USE_LOCAL_RECEIVER = false;
-AircraftDataSource* activeDataSource =
-    USE_LOCAL_RECEIVER ? static_cast<AircraftDataSource*>(&localDataSource)
-                       : static_cast<AircraftDataSource*>(&dataSource);
-
 ESP32Encoder encoder;
 int64_t lastEncoderPos = 0;
 
-AircraftManager aircraftManager(configServer, *activeDataSource, tft);
+std::unique_ptr<AircraftManager> aircraftManager;
 
 void SetLed(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -96,8 +92,15 @@ void setup()
   // begin background server for configuration
   configServer.Initialise();
 
+  AircraftDataSource* activeDataSource =
+      configServer.GetStoredString("receiver-ip").isEmpty()
+          ? static_cast<AircraftDataSource*>(&dataSource)
+          : static_cast<AircraftDataSource*>(&localDataSource);
+
+  aircraftManager = std::make_unique<AircraftManager>(configServer, *activeDataSource, tft);
+
   // initialise aircraft manager
-  aircraftManager.Initialise();
+  aircraftManager->Initialise();
 
   ESP32Encoder::useInternalWeakPullResistors = puType::up;
 
@@ -115,11 +118,11 @@ void loop()
   {
     if (pos > lastEncoderPos)
     {
-      aircraftManager.SelectNextAircraft();
+      aircraftManager->SelectNextAircraft();
     }
     else
     {
-      aircraftManager.SelectPreviousAircraft();
+      aircraftManager->SelectPreviousAircraft();
     }
 
     lastEncoderPos = pos;
@@ -132,13 +135,13 @@ void loop()
   if (lastButtonState == HIGH &&
       currentButtonState == LOW)
   {
-    aircraftManager.EncoderClick();
+    aircraftManager->EncoderClick();
   }
 
   lastButtonState = currentButtonState;
 
   SetLed(0, 255, 255); // Fetching
-  aircraftManager.Update();
+  aircraftManager->Update();
 
   // draw cycle
   backbuffer.fillScreen(lgfx::color888(0, 0, 0));
@@ -154,7 +157,7 @@ void loop()
                   20, 128, 5);
   }
 
-  aircraftManager.Draw(backbuffer);
+  aircraftManager->Draw(backbuffer);
   backbuffer.pushSprite(0, 0);
 
   SetLed(0, 255, 0); // Running

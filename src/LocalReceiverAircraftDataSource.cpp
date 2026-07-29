@@ -8,6 +8,8 @@ namespace
     constexpr float KT_TO_MPS = 0.514444f;
     constexpr float FPM_TO_MPS = 0.00508f;
     constexpr float MAX_POSITION_AGE_SECONDS = 15.0f;
+    constexpr float EARTH_RADIUS_MILES = 3958.7613f;
+    constexpr float DEFAULT_RANGE_MILES = 50.0f;
 }
 
 String LocalReceiverAircraftDataSource::NormalizeBaseUrl(String url)
@@ -16,6 +18,25 @@ String LocalReceiverAircraftDataSource::NormalizeBaseUrl(String url)
     while (url.endsWith("/"))
         url.remove(url.length() - 1);
     return url;
+}
+
+float LocalReceiverAircraftDataSource::MilesBetween(float lat1, float lon1, float lat2, float lon2)
+{
+    const float lat1Rad = radians(lat1);
+    const float lon1Rad = radians(lon1);
+    const float lat2Rad = radians(lat2);
+    const float lon2Rad = radians(lon2);
+
+    const float dLat = lat2Rad - lat1Rad;
+    const float dLon = lon2Rad - lon1Rad;
+
+    const float sinLat = sin(dLat / 2.0f);
+    const float sinLon = sin(dLon / 2.0f);
+    const float a = sinLat * sinLat +
+                    cos(lat1Rad) * cos(lat2Rad) *
+                    sinLon * sinLon;
+    const float c = 2.0f * atan2(sqrt(a), sqrt(1.0f - a));
+    return EARTH_RADIUS_MILES * c;
 }
 
 bool LocalReceiverAircraftDataSource::ParseAircraftObject(const JsonVariantConst& item, Aircraft& aircraft)
@@ -75,7 +96,15 @@ bool LocalReceiverAircraftDataSource::ParseAircraftObject(const JsonVariantConst
 
 void LocalReceiverAircraftDataSource::Initialise()
 {
-    baseUrl = NormalizeBaseUrl(configServer.GetStoredString("receiver-url"));
+    const String receiverIp = configServer.GetStoredString("receiver-ip");
+    if (!receiverIp.isEmpty())
+    {
+        baseUrl = NormalizeBaseUrl(String("http://") + receiverIp + ":8080/data");
+    }
+    else
+    {
+        baseUrl = NormalizeBaseUrl(configServer.GetStoredString("receiver-url"));
+    }
 
     if (baseUrl.isEmpty())
     {
@@ -102,6 +131,22 @@ void LocalReceiverAircraftDataSource::Initialise()
     fetchInterval = doc["refresh"] | 1000;
     if (fetchInterval < 1000)
         fetchInterval = 1000;
+
+    if (!doc["lat"].isNull())
+    {
+        receiverLat = doc["lat"].as<float>();
+        configServer.SetStoredString("receiver-lat", String(receiverLat, 6));
+    }
+
+    if (!doc["lon"].isNull())
+    {
+        receiverLon = doc["lon"].as<float>();
+        configServer.SetStoredString("receiver-lon", String(receiverLon, 6));
+    }
+
+    rangeMiles = configServer.GetStoredString("radius").toFloat();
+    if (rangeMiles <= 0.0f)
+        rangeMiles = DEFAULT_RANGE_MILES;
 }
 
 unsigned long LocalReceiverAircraftDataSource::GetFetchIntervalMs() const
@@ -139,8 +184,18 @@ bool LocalReceiverAircraftDataSource::Fetch(std::vector<Aircraft>& aircraft)
     for (JsonVariantConst item : items)
     {
         Aircraft ac;
-        if (ParseAircraftObject(item, ac))
-            aircraft.push_back(ac);
+        if (!ParseAircraftObject(item, ac))
+            continue;
+
+        if (receiverLat != 0.0f || receiverLon != 0.0f)
+        {
+            const float distanceMiles =
+                MilesBetween(receiverLat, receiverLon, ac.latitude, ac.longitude);
+            if (distanceMiles > rangeMiles)
+                continue;
+        }
+
+        aircraft.push_back(ac);
     }
 
     return true;
