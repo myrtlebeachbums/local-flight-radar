@@ -1,6 +1,6 @@
 # 📡 Local Flight Radar
 
-Local Flight Radar is a fork of [Anthony Sturdy's Micro Radar project](https://github.com/AnthonySturdy/micro-radar?tab=readme-ov-file) and the TechTalkies Flight Radar fork. It keeps the hardware small and inexpensive while replacing the cloud dependency with a local ADS-B receiver on your own network.
+Local Flight Radar is a fork of [Anthony Sturdy's Micro Radar project](https://github.com/AnthonySturdy/micro-radar?tab=readme-ov-file) and the [TechTalkies Flight Radar](https://github.com/TechTalkies/flight-radar) fork. It keeps the hardware small and inexpensive while replacing the cloud dependency by communicating with an existing local ADS-B receiver on your own network.
 
 This project is meant to be a glanceable radar display for a 240x240 round screen. It tells you what is around you right now, without ads, subscriptions, or a cloud account.
 
@@ -96,19 +96,16 @@ Open the setup page using whichever path is easiest on your network:
 
 - Scan the QR code shown on the device
 - Open the device IP address in a browser
-- Use mDNS if your network supports it
 
 The setup page is served by the ESP32 itself on port `8080`.
 
 ### Step 3: Configure the receiver
 
-On the setup page, enter the IP address or hostname of your local flight tracker.
+On the setup page, first set up the connection to your local ADSB receiver (such as a PiAware or similar device running supported dump1090 variants)
 
-You can then:
+Acquiring the device IP can be done by either clicking **Find receiver** to test common dump1090, SkyAware, readsb, and tar1090-style endpoints or by entering either the IP address or FQDN if you already know it. It is advised that you then hit save on the bottom of the screen and then refresh the page so that you can see how many planes would be visible on each of the preset distance options. 
 
-- Click **Find receiver** to test common dump1090, SkyAware, readsb, and tar1090-style endpoints
-- Leave the receiver address in place and save it manually if you already know it
-- Tune distance, units, sleep hours, and detail fields
+Next, you can select the unit type you wish to use, the visible distance, whether you wish to set sleep hours for the display, and other optional advances settings, such as detail fields. 
 
 The device is designed to work with compatible HTTP-accessible `receiver.json` and `aircraft.json` endpoints.
 
