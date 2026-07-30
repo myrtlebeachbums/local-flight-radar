@@ -101,22 +101,81 @@ The setup page is served by the ESP32 itself on port `8080`.
 
 ### Step 3: Configure the receiver
 
+![alt](Images/Configure-Tracker.png)
+
 On the setup page, first set up the connection to your local ADSB receiver (such as a PiAware or similar device running supported dump1090 variants)
 
-Acquiring the device IP can be done by either clicking **Find receiver** to test common dump1090, SkyAware, readsb, and tar1090-style endpoints or by entering either the IP address or FQDN if you already know it. It is advised that you then hit save on the bottom of the screen and then refresh the page so that you can see how many planes would be visible on each of the preset distance options. 
+Acquiring the device IP can be done by either clicking **Find receiver** to test common dump1090, SkyAware, readsb, and tar1090-style endpoints or by entering either the IP address or FQDN if you already know that information. 
 
-Next, you can select the unit type you wish to use, the visible distance, whether you wish to set sleep hours for the display, and other optional advances settings, such as detail fields. 
+**It is advised that you then hit save on the bottom of the screen and then refresh the page so that you can see how many planes would be visible on each of the preset distance options.** 
 
-The device is designed to work with compatible HTTP-accessible `receiver.json` and `aircraft.json` endpoints.
+
+![alt](Images/Device-Status.png)
+
+Once you have saved the flight tracker setting and refreshed the page, you can see the status of various device settings, including whether communications to the local flight tracker has been successfully detected. 
+
+
+![alt](Images/Measurement-Units.png)
+![alt](Images/Measurement-Unit-Options.png)
+
+Next, you can select the measurement unit type you wish to use. Aircraft details on the device display will reflect this change for details such as speed and altitude. 
+
+Choose one of the following unit systems:
+- **Aviation**: feet, knots, nautical miles
+- **Imperial**: feet, mph, statute miles
+- **Metric**: meters, km/h, kilometers
+
+
+![alt](Images/Density-Settings.png)
+
+The next option is the density of your display. If you've previously hit save and refreshed this page, the page will display how many aircraft were visible at the time of the refresh. 
+
+
+![alt](Images/Advanced-Distance.png)
+
+Should you wish to use something other than the pre-set values, you can manually set the distance. 
+
+
+![alt](Images/Display-Schedule.png)
+
+For people that may be using the device in an environment, such as a bedroom, where they do not wish to have the screen and indicator LED on at night, there is an optional display schedule to turn both off. Please note that while the LED indicator will turn off, the circular display is just set to all black, so there will still be some light coming from it. 
+
+During a scheduled time when the screen is off, a user may click the rotary encoder to wake the screen up temporarily. 
+
+It is recommended that the user refer to the status box towards the top of the page in case the time zone in use differs from their local time zone. For example, I live in the Eastern time zone, but my device is using UTC. 
+
+
+![alt](Images/Optional-Display-Settings.png)
+
+The device also has four optional device settings that may be toggled on or off:
+- Radar sweep animation
+- Aircraft information on the main screen
+- Incomplete data (For example, some planes, such as military aircraft, may not display full ADSB information. Toggling this feature off would not display aircraft with incomplete flight data.)
+- Directional Aircraft
+  
+
+![alt](Images/Advanced-Aircraft-Fields.png)
+
+This feature allows the user to select which fields are displayed when the user selects a device with the rotary encoder. A maximum of five fields are allowed due to screen limitations. 
+
+
+![alt](Images/Reset-Options.png)
+
+The project has two different reset paths:
+
+- **Hold the encoder button for 10 seconds during boot** to clear Wi-Fi only
+- **Use Factory reset in the settings page** to clear all saved configuration and Wi-Fi credentials
+
+That split is intentional. Wi-Fi recovery should be easy, while full factory reset should remain a deliberate action from the settings page.
+
 
 ---
 ## Receiver compatibility
 
-This fork has been tested with **dump1090-fa 10.2**.
+The device is designed to work with compatible HTTP-accessible `receiver.json` and `aircraft.json` endpoints, and this fork has been tested with **dump1090-fa 10.2**.
 
 It should also work with other dump1090-compatible receivers, provided they expose compatible `receiver.json` and `aircraft.json` files over HTTP. That includes readsb-style and tar1090-style setups when those files are available on the network.
 
-If you know the receiver IP or hostname, entering it directly is the simplest path.
 
 ---
 ## Using the device
@@ -129,35 +188,6 @@ Once configured, the device behaves like a small local radar display:
 - Use the status card to see Wi-Fi, receiver, time, and sleep information
 - Click **Sync time now** if you want to force an NTP refresh
 
-### Distance presets
-
-The setup page includes density presets with live aircraft counts so you can pick the display density that fits your receiver.
-
-If none of the presets fit, use the advanced whole-number distance field.
-
-### Units
-
-Choose one of the following unit systems:
-
-- **Aviation**: feet, knots, nautical miles
-- **Imperial**: feet, mph, statute miles
-- **Metric**: meters, km/h, kilometers
-
-### Sleep schedule
-
-You can schedule the screen and onboard LED to sleep during quiet hours.
-
-The display can also wake briefly when you press the encoder knob.
-
----
-## Recovery
-
-The project has two different reset paths:
-
-- **Hold the encoder button for 10 seconds during boot** to clear Wi-Fi only
-- **Use Factory reset in the settings page** to clear all saved configuration and Wi-Fi credentials
-
-That split is intentional. Wi-Fi recovery should be easy, while full factory reset should remain a deliberate action from the settings page.
 
 ---
 ## Troubleshooting
@@ -168,12 +198,14 @@ That split is intentional. Wi-Fi recovery should be easy, while full factory res
 - If the time looks wrong, use **Sync time now**
 - If the receiver cannot be discovered automatically, enter the receiver IP manually
 
+
 ---
 ## Credits
 
 This fork builds on the original work from Anthony Sturdy and the TechTalkies Flight Radar fork.
 
 Many thanks to both projects for making this build possible.
+
 
 ---
 ## License
