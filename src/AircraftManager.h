@@ -30,6 +30,8 @@ private:
 
     unsigned long fetchInterval = 0;
     unsigned long lastFetch = 999999;
+    unsigned long lastSuccessfulFetchMs = 0;
+    unsigned long lastWatchdogRecoveryAttemptMs = 0;
     std::vector<Aircraft> pendingAircraft;
     bool pendingAircraftReady = false;
     SemaphoreHandle_t pendingAircraftMutex = nullptr;
@@ -46,6 +48,7 @@ private:
     void DrawAircraftTriangle(LGFX_Sprite &backbuffer, int x, int y, const TrackedAircraft &tracked) const;
     void LoadDetailFields();
     String FormatDetailValue(const TrackedAircraft &tracked, AircraftDetailField field) const;
+    void ServiceConnectivityWatchdog();
 
 public:
     AircraftManager(ConfigurationWebServer &config, AircraftDataSource &source, LGFX &tftGfx)
@@ -57,6 +60,7 @@ public:
     static void FetchTaskEntry(void *parameter);
     void FetchLoop();
     bool TryConsumePendingAircraft(std::vector<Aircraft> &aircraft);
+    [[nodiscard]] String GetConnectivityWarningMessage() const;
 
     void Initialise();
     void Update();

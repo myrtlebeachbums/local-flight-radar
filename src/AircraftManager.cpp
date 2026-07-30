@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
+#include <WiFi.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -53,15 +54,50 @@ void AircraftManager::FetchTaskEntry(void *parameter)
     self->FetchLoop();
 }
 
+void AircraftManager::ServiceConnectivityWatchdog()
+{
+    const unsigned long now = millis();
+    if (lastSuccessfulFetchMs == 0)
+        return;
+
+    if (now - lastSuccessfulFetchMs < 5UL * 60UL * 1000UL)
+        return;
+
+    if (now - lastWatchdogRecoveryAttemptMs < 5UL * 60UL * 1000UL)
+        return;
+
+    lastWatchdogRecoveryAttemptMs = now;
+
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        Serial.println("[WARN] Wi-Fi appears down; attempting reconnect");
+        WiFi.reconnect();
+        return;
+    }
+
+    Serial.println("[WARN] Local ADSB feed appears stale; reinitialising data source");
+    dataSource.Initialise();
+    fetchInterval = dataSource.GetFetchIntervalMs();
+}
+
 void AircraftManager::FetchLoop()
 {
-    const TickType_t delayTicks = pdMS_TO_TICKS(fetchInterval == 0 ? 1000 : fetchInterval);
-
     for (;;)
     {
+        ServiceConnectivityWatchdog();
+
+        const TickType_t delayTicks = pdMS_TO_TICKS(fetchInterval == 0 ? 1000 : fetchInterval);
+
+        if (WiFi.status() != WL_CONNECTED)
+        {
+            vTaskDelay(delayTicks);
+            continue;
+        }
+
         std::vector<Aircraft> aircraft;
         if (dataSource.Fetch(aircraft))
         {
+            lastSuccessfulFetchMs = millis();
             if (pendingAircraftMutex != nullptr &&
                 xSemaphoreTake(pendingAircraftMutex, portMAX_DELAY) == pdTRUE)
             {
@@ -73,6 +109,19 @@ void AircraftManager::FetchLoop()
 
         vTaskDelay(delayTicks);
     }
+}
+
+String AircraftManager::GetConnectivityWarningMessage() const
+{
+    const unsigned long now = millis();
+
+    if (lastSuccessfulFetchMs != 0 && now - lastSuccessfulFetchMs < 5UL * 60UL * 1000UL)
+        return "";
+
+    if (WiFi.status() != WL_CONNECTED)
+        return "Unable to connect to Wi-Fi";
+
+    return "Unable to connect to local ADSB feed";
 }
 
 bool AircraftManager::TryConsumePendingAircraft(std::vector<Aircraft> &aircraft)
@@ -193,6 +242,8 @@ void AircraftManager::Initialise()
     LoadDetailFields();
 
     fetchInterval = dataSource.GetFetchIntervalMs();
+    lastSuccessfulFetchMs = millis();
+    lastWatchdogRecoveryAttemptMs = lastSuccessfulFetchMs;
 
     if (pendingAircraftMutex == nullptr)
         pendingAircraftMutex = xSemaphoreCreateMutex();
@@ -222,6 +273,9 @@ void AircraftManager::Initialise()
 
 void AircraftManager::Update()
 {
+    if (fetchTaskHandle == nullptr)
+        ServiceConnectivityWatchdog();
+
     std::vector<Aircraft> aircraft;
 
     if (fetchTaskHandle != nullptr)
@@ -241,6 +295,7 @@ void AircraftManager::Update()
 
         if (!dataSource.Fetch(aircraft))
             return;
+        lastSuccessfulFetchMs = millis();
     }
 
     if (aircraft.empty())

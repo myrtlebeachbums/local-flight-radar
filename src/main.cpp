@@ -156,6 +156,22 @@ static void DrawSetupScreen(LGFX_Sprite &buf)
   buf.qrcode(setupUrl, 24, 24, 192, 6);
 }
 
+static void DrawConnectivityWarning(LGFX_Sprite &buf, const String &message)
+{
+  buf.fillScreen(lgfx::color888(0, 0, 0));
+  buf.setTextDatum(textdatum_t::middle_center);
+  buf.setTextSize(1);
+
+  buf.setTextColor(lgfx::color888(255, 120, 0));
+  buf.drawCentreString("CONNECTION WARNING", SCREEN_SIZE / 2, SCREEN_SIZE / 2 - 28);
+
+  buf.setTextColor(lgfx::color888(255, 0, 0));
+  buf.drawCentreString(message, SCREEN_SIZE / 2, SCREEN_SIZE / 2);
+
+  buf.setTextColor(lgfx::color888(255, 120, 0));
+  buf.drawCentreString("Retrying automatically", SCREEN_SIZE / 2, SCREEN_SIZE / 2 + 28);
+}
+
 static bool ClearWifiIfBootButtonHeld()
 {
   constexpr unsigned long HOLD_DURATION_MS = 10000;
@@ -373,6 +389,7 @@ void loop()
   }
 
   ProcessEncoderInput();
+  aircraftManager->Update();
 
   if (IsDisplaySleeping())
   {
@@ -384,8 +401,18 @@ void loop()
     return;
   }
 
+  const String connectivityWarning = aircraftManager->GetConnectivityWarningMessage();
+
   // draw cycle
   backbuffer.fillScreen(lgfx::color888(0, 0, 0));
+
+  if (!connectivityWarning.isEmpty())
+  {
+    DrawConnectivityWarning(backbuffer, connectivityWarning);
+    backbuffer.pushSprite(0, 0);
+    SetLed(255, 80, 0);
+    return;
+  }
 
   String renderScanlines = configServer.GetStoredString("scanline");
   if (renderScanlines.isEmpty() || renderScanlines == "true")
@@ -400,8 +427,6 @@ void loop()
 
   aircraftManager->Draw(backbuffer);
   backbuffer.pushSprite(0, 0);
-
-  aircraftManager->Update();
 
   SetLed(0, 255, 0); // Running
 
